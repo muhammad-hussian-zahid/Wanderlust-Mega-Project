@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: madhupdevops/wanderlust-frontend-beta:v3.0.18
+          image: hussain968/frontend-wanderlust:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5173
 ---
