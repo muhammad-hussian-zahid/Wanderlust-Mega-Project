@@ -1,192 +1,403 @@
-# Wanderlust Deployment on Kubernetes
+# Wanderlust Deployment on Kubernetes (kind) using GitHub Codespaces
 
-### In this project, we will learn about how to deploy wanderlust application on Kubernetes.
+### In this project, we will learn how to deploy the Wanderlust MERN stack application (Frontend, Backend, MongoDB, Redis) on a Kubernetes cluster created with **kind**, running inside a **GitHub Codespace**. No cloud account (AWS, etc.) is required.
 
 ### Pre-requisites to implement this project:
--  Create 2 AWS EC2 instance (Ubuntu) with instance type t2.medium and root volume 29GB.
--  Setup <a href="https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/kubeadm.md"><u> Kubeadm </a></u>
+- A GitHub account.
+- A Docker Hub account (to store the frontend and backend images).
+- A Codespace with **4 cores / 16 GB RAM** (a free account gives about 30 hours per month on this machine size, so stop the Codespace when you are not using it).
+
+### Tech stack used in this project:
+- GitHub Codespaces (Cloud dev machine)
+- Docker and Docker Hub (Containerization and image registry)
+- kind (Kubernetes in Docker)
+- kubectl (Kubernetes CLI)
+- MongoDB (Database)
+- Redis (Caching)
+
+### Docker images used in this project:
+
+| Component | Image |
+|---|---|
+| Frontend | `hussain968/frontend-wanderlust:latest` |
+| Backend | `hussain968/backend-wanderlust:latest` |
+| MongoDB | `mongo:latest` |
+| Redis | `redis:latest` |
+
+> Note: `hussain968` is the Docker Hub username used in this guide. If you are following this guide with your own Docker Hub account, replace `hussain968` with your username in every command below.
+
+### How the application is exposed:
+
+| Component | Container port | NodePort | Codespace URL |
+|---|---|---|---|
+| Frontend | 5173 | 31000 | `https://<codespace-name>-31000.app.github.dev` |
+| Backend | 8080 | 31100 | `https://<codespace-name>-31100.app.github.dev` |
+| MongoDB | 27017 | internal only | - |
+| Redis | 6379 | internal only | - |
 
 #
 ## Steps for Kubernetes deployment:
 
-1) Become root user :
+1) Fork the repository :
+
+- Open `https://github.com/DevMadhup/Wanderlust-Mega-Project`
+- Click **Fork** (top right) and then **Create fork**
+
+#
+2) Create the Codespace :
+
+- Open your fork, click the green **Code** button and open the **Codespaces** tab
+- Click **...** and then **New with options**
+- Select the **4-core** machine type and click **Create codespace**
+- Wait until VS Code opens in your browser, then open the terminal (`` Ctrl + ` ``)
+
+#
+3) Verify Docker and kubectl are installed :
 ```bash
-sudo su
+docker --version
+kubectl version --client
 ```
 
 #
-2) Clone code from remote repository (GitHub) :
+4) Install kind :
 ```bash
-git clone -b devops https://github.com/DevMadhup/wanderlust.git
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+kind version
 ```
 
 #
-3) Verify nodes are in ready state or not :
+5) Navigate to the project directory :
 ```bash
-kubectl get nodes
-```
-![Alt text](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/nodes.png)
-
-#
-4) Create kubernetes namespace :
-```bash
-kubectl create namespace wanderlust
-```
-![Namespace](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/namespace%20create.png)
-
-#
-5) Update kubernetes config context : 
-```bash
-kubectl config set-context --current --namespace wanderlust
-```
-![Update context](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/context%20wanderlust.png)
-
-#
-6) Enable DNS resolution on kubernetes cluster :
-
-- Check coredns pod in kube-system namespace and you will find <i> Both coredns pods are running on master node </i>
-
-```bash
-kubectl get pods -n kube-system -o wide | grep -i core
-```
-![Alt text](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/get-coredns.png)
-
-- Above step will run coredns pod on worker node as well for DNS resolution
-
-```bash
-kubectl edit deploy coredns -n kube-system -o yaml
-```
-<i> Make replica count from 2 to 4 </i>
-
-![replica 4](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/edit-coredns.png)
-
-#
-7) Navigate to frontend directory :
-```bash
-cd frontend
+cd /workspaces/Wanderlust-Mega-Project
 ```
 
 #
-8) Edit .env.docker file and change the public IP Address with your worker node public IP :
-```bash
-vi .env.docker
-```
-![IP](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/frontend.env.docker.png)
+6) Set your Codespace URLs as variables :
 
-#
-9) Build frontend docker image : 
-```bash
-docker build -t madhupdevops/frontend-wanderlust:v2.1.8 .
-```
-![Dockerfile frontend](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/docker%20frontend%20build.png)
+Every forwarded port in a Codespace gets its own URL. These variables are used in the next steps.
 
-#
-10) Navigate to backend directory :
 ```bash
-cd ../backend/
+FRONT="https://${CODESPACE_NAME}-31000.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
+BACK="https://${CODESPACE_NAME}-31100.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
+
+echo $FRONT
+echo $BACK
 ```
 
-#
-11) Open .env.docker file and edit below variables : 
-
-    - MONGODB_URI: \<your-mongodb-servicename>
-    - REDIS_URL: \<your-redis-servicename>
-    - FRONTEND_URL: \<your-workernode-publicIP>
-
-> Note: To get service names, check <u>mongodb.yaml, redis.yaml</u>
-
-![Backend env file](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/backend.env.docker.png)
+> Note: These variables only exist in the current terminal. If you open a new terminal, run the commands above again.
 
 #
-12) Build backend docker image : 
+7) Update the frontend environment file :
+
+The frontend needs the backend URL (`VITE_API_PATH`).
+
 ```bash
-docker build -t madhupdevops/backend-wanderlust:v2.1.8 .
+sed -i "s|^VITE_API_PATH=.*|VITE_API_PATH=\"$BACK\"|" frontend/.env.docker
+cat frontend/.env.docker
 ```
-![Backend dockerfile](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/docker%20backend%20build.png)
 
 #
-13) Check docker images:
+8) Update the backend environment file :
+
+The backend needs the frontend URL (`FRONTEND_URL`) so that it allows requests from your frontend.
+
 ```bash
-docker images
+sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=\"$FRONT\"|" backend/.env.docker
+cat backend/.env.docker
 ```
-![docker images](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/docker%20images.png)
+
+Make sure these two values are unchanged, because they match the Kubernetes service names:
+- `MONGODB_URI="mongodb://mongo-service/wanderlust"`
+- `REDIS_URL="redis://redis-service:6379"`
+
+**(Recommended)** Generate your own `JWT_SECRET` instead of using the one in the repository:
+```bash
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 64)|" backend/.env.docker
+```
+
+> Note: Do not commit the `.env.docker` files to GitHub, because they contain your Codespace URLs and secret.
 
 #
-14) Login to DockerHub and push image to DockerHub
+9) Build the frontend and backend Docker images :
+
+The URLs from steps 7 and 8 are copied into the images during the build, so always build **after** editing the env files.
+
+```bash
+docker build -t hussain968/frontend-wanderlust:latest ./frontend
+docker build -t hussain968/backend-wanderlust:latest ./backend
+```
+
+Check the images :
+```bash
+docker images | grep wanderlust
+```
+
+#
+10) Login to Docker Hub and push the images :
+
 ```bash
 docker login
 ```
-![docker login](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/docker%20login.png)
 
 ```bash
-docker push madhupdevops/frontend-wanderlust:v2.1.8
-docker push madhupdevops/backend-wanderlust:v2.1.8
+docker push hussain968/frontend-wanderlust:latest
+docker push hussain968/backend-wanderlust:latest
+```
+
+> Note: The images contain your Codespace URLs and `JWT_SECRET`. Consider making the two Docker Hub repositories **private** (Docker Hub > repository > Settings).
+
+#
+11) Pull the MongoDB and Redis images :
+```bash
+docker pull --platform linux/amd64 mongo:latest
+docker pull --platform linux/amd64 redis:latest
 ```
 
 #
-15) Once, Image is pushed to DockerHub, navigate to kubernetes directory
+12) Create the kind cluster :
+
+The config file maps NodePorts `31000` and `31100` so that your application can be reached from outside the cluster.
+
 ```bash
-cd ../kubernetes
+cat <<EOT > kubernetes/kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 31000
+    hostPort: 31000
+  - containerPort: 31100
+    hostPort: 31100
+EOT
+```
+
+```bash
+kind create cluster --name wanderlust --config kubernetes/kind-config.yaml
+```
+
+Verify the node is ready :
+```bash
+kubectl get nodes
 ```
 
 #
-16) Apply manifests file the below order:
+13) Load all four images into the kind cluster :
 
-    - Create persistent volume :
-    ```bash
-    kubectl apply -f persistentVolume.yaml 
-    ```
-    ![Peristent volume](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/pv.png)
+The cluster runs inside a Docker container, so the images must be copied into it. This may take a few minutes (MongoDB is the largest image), so wait until each command finishes.
 
-    - Create persistent volume Claim :
-    ```bash
-    kubectl apply -f persistentVolumeClaim.yaml 
-    ```
-    ![Peristent volume Claim](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/pvc.png)
+```bash
+for IMG in hussain968/frontend-wanderlust:latest hussain968/backend-wanderlust:latest mongo:latest redis:latest; do
+  docker save --platform linux/amd64 $IMG | docker exec -i wanderlust-control-plane ctr -n k8s.io images import --digests -
+done
+```
 
-    - Create MongoDB deployment and service :
-    ```bash
-    kubectl apply -f mongodb.yaml 
-    ```
-    ![MongoDb](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/mongo.png)
+Verify that all four images are present in the cluster :
+```bash
+docker exec wanderlust-control-plane crictl images | grep -E "hussain968|mongo|redis"
+```
 
-    - Create Redis deployment and service :
-    > Note: Wait for 3-4 mins to get mongodb, redis pods and service should be up, otherwise backend-service will not connect.
-    ```bash
-    kubectl apply -f redis.yaml 
-    ```
-    ![Redis](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/redis.png)
-
-    - Create Backend deployment and service :
-    ```bash
-    kubectl apply -f backend.yaml 
-    ```
-    ![Backend](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/backend.png)
-
-    - Create Frontend deployment and service :
-    ```bash
-    kubectl apply -f frontend.yaml
-    ```
-    ![Frontend](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/frontend.png)
+You should see `frontend-wanderlust`, `backend-wanderlust`, `mongo` and `redis`.
 
 #
-17)  Check all deployments and services :
-```bash 
+14) Navigate to the kubernetes directory :
+```bash
+cd kubernetes
+```
+
+#
+15) Update the manifests to use your Docker Hub images :
+
+This points the frontend and backend manifests to your images and tells Kubernetes to use images that are already present in the cluster instead of downloading them again.
+
+```bash
+sed -i 's|image: .*\(wanderlust-frontend\|frontend-wanderlust\).*|image: hussain968/frontend-wanderlust:latest\n          imagePullPolicy: IfNotPresent|' frontend.yaml
+sed -i 's|image: .*\(wanderlust-backend\|backend-wanderlust\).*|image: hussain968/backend-wanderlust:latest\n          imagePullPolicy: IfNotPresent|' backend.yaml
+sed -i 's|image: mongo$|image: mongo\n          imagePullPolicy: IfNotPresent|' mongodb.yaml
+sed -i 's|image: redis$|image: redis\n          imagePullPolicy: IfNotPresent|' redis.yaml
+```
+
+Verify the changes :
+```bash
+grep -A1 "image:" *.yaml
+```
+
+Each `image:` line should be followed by `imagePullPolicy: IfNotPresent`.
+
+> Note: Run the `sed` commands only once, otherwise the `imagePullPolicy` line will be duplicated.
+
+#
+16) Create the Kubernetes namespace :
+```bash
+kubectl create namespace wanderlust
+```
+
+#
+17) Update the Kubernetes config context :
+
+This sets `wanderlust` as the default namespace, so you do not need to add `-n wanderlust` to every command.
+
+```bash
+kubectl config set-context --current --namespace wanderlust
+```
+
+#
+18) Apply the manifest files in the below order :
+
+> Note: Apply the files one by one by name. Do not run `kubectl apply -f .` because this folder also contains `kind-config.yaml`, which is a kind file and not a Kubernetes manifest.
+
+- Create persistent volume and persistent volume claim :
+```bash
+kubectl apply -f persistentVolume.yaml
+kubectl apply -f persistentVolumeClaim.yaml
+```
+
+- Create MongoDB deployment and service :
+```bash
+kubectl apply -f mongodb.yaml
+```
+
+- Create Redis deployment and service :
+```bash
+kubectl apply -f redis.yaml
+```
+
+- Wait until MongoDB and Redis are ready, otherwise the backend will not be able to connect :
+```bash
+kubectl wait --for=condition=ready pod -l app=mongo --timeout=180s
+kubectl wait --for=condition=ready pod -l app=redis --timeout=180s
+```
+
+- Create Backend deployment and service :
+```bash
+kubectl apply -f backend.yaml
+```
+
+- Create Frontend deployment and service :
+```bash
+kubectl apply -f frontend.yaml
+```
+
+#
+19) Check all deployments and services :
+```bash
 kubectl get all
-```
-![all deployments and services](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/all-deps.png)
-
-18) Check logs for all the pods :
-> Note: This is mandatory to ensure all pods and services are connected or not, if not then recreate deployments
-```bash
-kubectl logs <pod-name>
+kubectl get pv,pvc
 ```
 
-20) Navigate to chrome and access your application at 31000 port :
+All four pods should be in `Running` state with `1/1` ready, and the PV and PVC should be `Bound`. Pods may take a minute or two to start.
+
 ```bash
-http://<your-workernode-publicip>:31000/
+kubectl get pods -w
 ```
-![App](https://github.com/DevMadhup/wanderlust/blob/devops/kubernetes/assets/app.png)
+(Press `Ctrl + C` to stop watching.)
 
 #
+20) Check the logs of the backend :
 
+> Note: This confirms the backend is connected to MongoDB and Redis. If the backend started before the databases were ready, recreate its pod with `kubectl delete pod -l app=backend`.
+
+```bash
+kubectl logs -l app=backend --tail=20
+```
+
+#
+21) Make the application ports public :
+
+Codespaces ports are private by default. The backend must be public because your browser calls it directly.
+
+```bash
+gh codespace ports visibility 31000:public 31100:public -c $CODESPACE_NAME
+```
+
+Or use the **Ports** tab in VS Code: right-click each port, choose **Port Visibility** and then **Public**. If the ports are not listed, click **Add Port** and add `31000` and `31100`.
+
+#
+22) Verify the backend :
+
+```bash
+curl -i http://localhost:31100/
+curl -i "https://${CODESPACE_NAME}-31100.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}/"
+```
+
+Any HTTP response means the backend is running and reachable.
+
+#
+23) Access your application in Chrome :
+
+Frontend :
+```bash
+echo "https://${CODESPACE_NAME}-31000.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
+```
+
+Backend :
+```bash
+echo "https://${CODESPACE_NAME}-31100.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
+```
+
+Open the URLs in your browser. If Codespaces shows a warning page for the development port, click **Continue**. Your Wanderlust application is now deployed on Kubernetes.
+
+#
+## Stop and restart the Codespace
+
+**Stop the Codespace** (saves your free hours; your cluster, images and data are kept) :
+
+- Browser: open `https://github.com/codespaces`, click **...** next to your Codespace and choose **Stop codespace**
+- Terminal:
+```bash
+gh codespace stop -c $CODESPACE_NAME
+```
+
+> Note: Closing the browser tab does not stop the Codespace. It keeps running until the inactivity timeout (30 minutes by default).
+
+**Start it again later :**
+
+1) Open `https://github.com/codespaces` and click your Codespace.
+
+2) Start the kind cluster container :
+```bash
+docker start wanderlust-control-plane
+```
+
+3) If `kubectl` cannot connect, refresh the connection :
+```bash
+kind export kubeconfig --name wanderlust
+```
+
+4) Wait a minute and check that all pods are running again (no need to redeploy) :
+```bash
+kubectl get nodes
+kubectl get pods
+```
+
+5) If a pod stays in an error state, recreate it (use `mongo`, `redis` or `frontend` for the others) :
+```bash
+kubectl delete pod -l app=backend
+```
+
+6) Make the ports public again :
+```bash
+gh codespace ports visibility 31000:public 31100:public -c $CODESPACE_NAME
+```
+
+#
+## Clean up
+
+Delete only the cluster (keeps the Codespace) :
+```bash
+kind delete cluster --name wanderlust
+```
+
+Delete the Codespace when you have finished the project (this removes everything, including the cluster and images) :
+
+- Browser: open `https://github.com/codespaces`, click **...** next to your Codespace and choose **Delete**
+- Terminal:
+```bash
+gh codespace delete -c $CODESPACE_NAME
+```
+
+> Note: Push anything you want to keep with `git push` before deleting.
+
+#
